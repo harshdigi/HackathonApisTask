@@ -5,6 +5,8 @@ from rest_framework.response import Response
 from helper.authentication import CustomUserAuth, IsAuthenticatedModular, is_authenticated
 from .models import Hackathon, HackathonRegistration, HackathonSubmission
 from .serializers import HackathonSerializer, SubmissionSerializer
+from users.serializers import UserSerializer
+from users.models import User
 from rest_framework import status, viewsets, pagination
 from rest_framework.decorators import api_view
 from cerberus import Validator
@@ -33,9 +35,12 @@ class HackathonCreateAPIView(viewsets.ModelViewSet):
     # this function will be called when we use post method
     def create(self, request, *args, **kwargs):
         try:
+            request.data._mutable = True
             request.data['created_by'] = request.user.pk
+            request.data._mutable = False
             serializer = self.serializer_class(data=request.data)
-            serializer.is_valid(raise_exception=True)
+            if not serializer.is_valid():
+                return Response(serializer.errors, status= status.HTTP_400_BAD_REQUEST)
             serializer.save()
             return Response(serializer.data)
         except Exception as e:
@@ -100,7 +105,7 @@ class HackathonSubmissionAPIView(viewsets.ModelViewSet):
             context["hackathon_id"] = hackathon_id
             serializer = SubmissionSerializer(data= request.data, context = context )
             if not serializer.is_valid():
-                return Response(serializer.errors)
+                return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
             if HackathonSubmission.objects.filter(registration__user = request.user, registration__hackathon__id = hackathon_id).exists() :
                 return Response({"error" : "User is already made submission to hackathon"}, status= status.HTTP_400_BAD_REQUEST)
 
@@ -116,4 +121,25 @@ class HackathonSubmissionAPIView(viewsets.ModelViewSet):
         context = super().get_serializer_context()
         context = {"user" : self.request.user}
         return context
-    
+
+class HackathonUser(viewsets.ModelViewSet):
+    serializer_class = UserSerializer
+    permission_classes = [IsAuthenticatedModular]
+    authentication_classes = [CustomUserAuth]
+    http_method_names = ['get']
+
+    def get_queryset(self):
+        try:
+            get_not_registered = self.request.query_params.get('not_registered', 0)
+            
+            user_list = list(HackathonRegistration.objects.all().values_list('user', flat=True).distinct())
+            queryset = None
+            if get_not_registered:
+                queryset = User.objects.all().exclude(user_id__in =  user_list)
+            else: 
+                queryset = User.objects.filter(user_id__in = user_list)
+            return queryset
+        except Exception as e:
+            print("Error for log purpose", e)
+            return None
+
